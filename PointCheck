@@ -1,0 +1,149 @@
+import tkinter as tk
+from tkinter import filedialog, simpledialog
+import pandas as pd
+import logging
+import json
+from datetime import datetime
+
+operation_history = []
+
+
+def process_csv_and_generate_excel():
+    logging.debug("Începe funcția process_csv_and_generate_excel")
+
+    csv_file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
+
+    if not csv_file_path:
+        logging.debug("Nu a fost selectat un fișier CSV.")
+        result_label.config(text="Nu ați selectat un fișier CSV.")
+        return
+
+    df = pd.read_csv(csv_file_path)
+    df = df.sort_values(by='Code')
+
+    result = df.groupby('Code').agg({'Northing': ['min', 'max', lambda x: x.max() - x.min(), 'mean'],
+                                     'Easting': ['min', 'max', lambda x: x.max() - x.min(), 'mean'],
+                                     'Elevation': ['min', 'max', lambda x: x.max() - x.min(), 'mean']})
+    result.columns = ['Min_N', 'Max_N', 'Diff_N', 'Mean_N',
+                      'Min_E', 'Max_E', 'Diff_E', 'Mean_E',
+                      'Min_Elev', 'Max_Elev', 'Diff_Elev', 'Mean_Elev']
+
+    code_values = df['Code'].unique()
+    code_df = pd.DataFrame({'Code': code_values})
+
+    result = code_df.merge(result, on='Code', how='left')
+
+    overall_mean = df[['Northing', 'Easting', 'Elevation']].mean()
+    result[['Overall_Mean_N', 'Overall_Mean_E', 'Overall_Mean_Elev']] = overall_mean.values
+
+    excel_file_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel Files", "*.xlsx")])
+
+    if not excel_file_path:
+        return  # Utilizatorul a anulat salvarea
+
+    result.to_excel(excel_file_path, index=False)
+
+    save_operation_to_history(csv_file_path, excel_file_path)
+
+    result_label.config(
+        text=f"Fișierul Excel a fost generat în: {excel_file_path}")
+
+
+def save_operation_to_history(csv_file, excel_file):
+    operation_details = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "csv_file": csv_file,
+        "excel_file": excel_file,
+    }
+    operation_history.append(operation_details)
+    save_operation_history()
+
+
+def show_operation_history():
+    history_window = tk.Toplevel(root)
+    history_window.title("Istoric operațiuni")
+
+    def delete_selected_items():
+        global operation_history
+        items_to_delete = []
+        for i, (operation, checkbox, label) in enumerate(zip(operation_history, checkboxes, labels)):
+            if checkbox.get():
+                items_to_delete.append(i)
+        items_to_delete.reverse()
+        for index in items_to_delete:
+            del operation_history[index]
+            labels[index].destroy()
+        save_operation_history()
+        refresh_history_text()
+
+    def delete_history():
+        global operation_history
+        for label in labels:
+            label.destroy()
+        operation_history.clear()
+        save_operation_history()
+        refresh_history_text()
+
+    def refresh_history_text():
+        history_text.config(state="normal")
+        history_text.delete(1.0, "end")
+        for operation in operation_history:
+            history_text.insert("end", f"{operation['timestamp']} - CSV: {operation['csv_file']}, Excel: {operation['excel_file']}\n")
+        history_text.config(state="disabled")
+
+    checkboxes = []
+    labels = []
+    history_text = tk.Text(history_window)
+    history_text.pack()
+
+    for operation in operation_history:
+        var = tk.BooleanVar(value=False)
+        checkboxes.append(var)
+        checkbox = tk.Checkbutton(history_text, variable=var)
+        label = tk.Label(history_text, text=f"{operation['timestamp']} - CSV: {operation['csv_file']}, Excel: {operation['excel_file']}")
+        labels.append(label)
+
+        history_text.window_create("end", window=checkbox)
+        history_text.window_create("end", window=label)
+        history_text.insert("end", "\n")  # Add a newline
+
+        checkbox.select()
+
+    delete_selected_button = tk.Button(history_window, text="Șterge elementele selectate", command=delete_selected_items)
+    delete_selected_button.pack()
+    delete_history_button = tk.Button(history_window, text="Șterge istoric complet", command=delete_history)
+    delete_history_button.pack()
+
+
+def save_operation_history():
+    with open("operation_history.json", "w") as history_file:
+        json.dump(operation_history, history_file)
+
+
+def load_operation_history():
+    try:
+        with open("operation_history.json", "r") as history_file:
+            return json.load(history_file)
+    except FileNotFoundError:
+        return []
+
+
+root = tk.Tk()
+root.title("Convert CSV to Excel")
+root.geometry("400x200")
+
+label = tk.Label(root, text="Selectați un fișier CSV:")
+label.pack(pady=20)
+
+result_label = tk.Label(root, text="", wraplength=300)
+result_label.pack(pady=10)
+
+choose_file_button = tk.Button(root, text="Alegeți fișierul CSV", command=process_csv_and_generate_excel)
+choose_file_button.pack()
+
+history_button = tk.Button(root, text="Afișați Istoricul", command=show_operation_history)
+history_button.pack()
+
+operation_history = load_operation_history()
+
+root.mainloop()
